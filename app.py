@@ -1,17 +1,20 @@
 from flask import Flask, request, jsonify
+from flask_cors import CORS
 import requests
 import base64
 import os
-from flask_cors import CORS  # 添加CORS支持
-import logging  # 添加日志模块
+import logging
 from zhipuai import ZhipuAI
+from dotenv import load_dotenv
+
+app = Flask(__name__)
+CORS(app)  # 启用CORS
+
 
 # 配置日志
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
 
-app = Flask(__name__)
-CORS(app)  # 启用CORS
 
 # 百度AI配置
 BAIDU_API_KEY = os.getenv('BAIDU_API_KEY')
