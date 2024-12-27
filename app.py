@@ -94,6 +94,7 @@ def identify_food():
     logger.info("收到识别请求")
     
     if 'food_image' not in request.files:
+        logger.error("没有文件")
         return jsonify({'error': '没有文件'}), 400
     
     file = request.files['food_image']
@@ -110,13 +111,19 @@ def identify_food():
         "https://aip.baidubce.com/rest/2.0/image-classify/v2/dish",
         data=params
     )
+    
+    # 记录百度API的返回结果
+    logger.info(f"百度API返回结果: {response.json()}")
+    
     result = response.json()
     
     if 'result' in result and len(result['result']) > 0:
         food_name = result['result'][0]['name']
         confidence = result['result'][0]['probability']
         
-        # 使用优化后的重量估算函数
+        logger.info(f"识别成功: 食物名称={food_name}, 置信度={confidence}")
+        
+        # 使用智谱AI估算食物重量
         weight = estimate_weight(food_name)
         
         return jsonify({
@@ -125,6 +132,7 @@ def identify_food():
             'weight': weight
         })
     
+    logger.error("无法识别食物")
     return jsonify({'error': '无法识别食物'}), 400
 
 @app.route('/calories', methods=['GET'])
