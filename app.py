@@ -4,7 +4,7 @@ import requests
 import base64
 import os
 import logging
-import zhipuai
+from zhipuai import ZhipuAI
 from dotenv import load_dotenv
 
 app = Flask(__name__)
@@ -30,7 +30,7 @@ if not ZHIPU_API_KEY:
 
 logger.info(f"ZHIPU_API_KEY: {ZHIPU_API_KEY[:10]}...")  # 打印API key的前10个字符用于调试
 
-zhipuai.api_key = ZHIPU_API_KEY
+client = ZhipuAI(api_key=ZHIPU_API_KEY)
 
 def get_baidu_access_token():
     params = {
@@ -44,7 +44,7 @@ def get_baidu_access_token():
 def estimate_weight(food_name):
     """估算食物重量并进行合理性检查"""
     try:
-        weight_response = zhipuai.chat.completions.create(
+        weight_response = client.chat.completions.create(
             model="glm-4-plus",
             messages=[
                 {
@@ -137,7 +137,7 @@ def get_calories():
             return jsonify({'error': '参数不完整', 'calories': 0}), 400
         
         # 调用智谱AI计算卡路里
-        response = zhipuai.chat.completions.create(
+        response = client.chat.completions.create(
             model="glm-4-plus",
             messages=[
                 {
