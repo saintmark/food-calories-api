@@ -98,6 +98,10 @@ def identify_food():
         return jsonify({'error': '没有文件'}), 400
     
     file = request.files['food_image']
+    if file.filename == '':
+        logger.error("文件名为空")
+        return jsonify({'error': '没有选择文件'}), 400
+    
     image_base64 = base64.b64encode(file.read()).decode('UTF-8')
     
     # 调用百度AI识别菜品
