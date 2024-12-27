@@ -3,4 +3,4 @@ Werkzeug==2.0.3
 Flask-Cors==3.0.10
 requests==2.31.0
 python-dotenv==1.0.0
-zhipuai==1.0.7
+zhipuai==1.0.8
