@@ -8,3 +8,4 @@ openai>=1.0.0
 backoff
 httpx
 gunicorn
+google-cloud-vision

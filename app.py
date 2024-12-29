@@ -3,8 +3,11 @@ from flask_cors import CORS
 import base64
 import os
 import logging
-from openai import OpenAI
+import json
+from google.cloud import vision
+from google.oauth2 import service_account
 import backoff
+from openai import OpenAI
 import httpx
 from dotenv import load_dotenv
 
@@ -92,36 +95,25 @@ except Exception as e:
 
 openai_client = OpenAI(**openai_config)
 
+# Google Cloud 配置
+GOOGLE_CREDENTIALS_JSON = os.getenv('GOOGLE_APPLICATION_CREDENTIALS_JSON')
+if not GOOGLE_CREDENTIALS_JSON:
+    raise ValueError("未找到 Google Cloud 凭证")
+
+# 从环境变量创建凭证
+credentials_dict = json.loads(GOOGLE_CREDENTIALS_JSON)
+credentials = service_account.Credentials.from_service_account_info(credentials_dict)
+
+# 初始化 Vision API 客户端
+vision_client = vision.ImageAnnotatorClient(credentials=credentials)
+
 @backoff.on_exception(
     backoff.expo,
     (Exception),
     max_tries=3,
     max_time=30
 )
-def call_openai_vision(image_data):
-    """调用OpenAI Vision API的函数，带有重试机制"""
-    return openai_client.chat.completions.create(
-        model="gpt-4o-mini",
-        messages=[
-            {
-                "role": "system",
-                "content": "你是一个食物识别专家。请识别图片中的食物，只返回中文食物名称，不要包含任何其他描述。"
-            },
-            {
-                "role": "user",
-                "content": [
-                    {"type": "text", "text": "这是什么食物？请只返回食物名称。"},
-                    {
-                        "type": "image_url",
-                        "image_url": {
-                            "url": f"data:image/jpeg;base64,{image_data}"
-                        }
-                    }
-                ]
-            }
-        ],
-        max_tokens=100
-    )
+
 
 @backoff.on_exception(
     backoff.expo,
@@ -174,6 +166,62 @@ def estimate_weight(food_name):
         logger.error(f"重量估算错误: {str(e)}")
         return 200
 
+def detect_food(image_content):
+    """使用 Google Cloud Vision API 识别食物"""
+    try:
+        image = vision.Image(content=image_content)
+        
+        # 执行标签检测
+        response = vision_client.label_detection(image=image)
+        labels = response.label_annotations
+        
+        # 执行对象检测
+        objects = vision_client.object_localization(image=image).localized_object_annotations
+        
+        # 合并结果并筛选食物相关标签
+        food_keywords = set()
+        
+        # 从标签中提取食物相关词
+        for label in labels:
+            if any(keyword in label.description.lower() for keyword in 
+                  ['food', 'dish', 'cuisine', 'meal', 'fruit', 'vegetable', 'meat']):
+                food_keywords.add(label.description)
+        
+        # 从对象中提取食物相关词
+        for obj in objects:
+            if any(keyword in obj.name.lower() for keyword in 
+                  ['food', 'dish', 'cuisine', 'meal', 'fruit', 'vegetable', 'meat']):
+                food_keywords.add(obj.name)
+        
+        # 如果找到食物相关标签，使用 OpenAI 翻译成中文
+        if food_keywords:
+            food_list = ', '.join(list(food_keywords)[:3])  # 取前三个最相关的标签
+            
+            # 使用 OpenAI 进行翻译和总结
+            response = openai_client.chat.completions.create(
+                model="gpt-3.5-turbo",  # 使用较便宜的模型
+                messages=[
+                    {
+                        "role": "system",
+                        "content": "你是一个食物翻译专家。请将英文食物名称翻译成一个简洁的中文名称。"
+                    },
+                    {
+                        "role": "user",
+                        "content": f"请将这些食物标签翻译成一个简单的中文食物名称：{food_list}"
+                    }
+                ],
+                max_tokens=50
+            )
+            
+            food_name = response.choices[0].message.content.strip()
+            return food_name
+        else:
+            raise ValueError("未能识别出食物")
+            
+    except Exception as e:
+        logger.error(f"食物识别错误: {str(e)}")
+        raise
+
 @app.route('/identify', methods=['POST'])
 def identify_food():
     logger.info("收到识别请求")
@@ -188,12 +236,14 @@ def identify_food():
         return jsonify({'error': '没有选择文件'}), 400
     
     try:
-        image_data = base64.b64encode(file.read()).decode('UTF-8')
-        response = call_openai_vision(image_data)
+        # 读取图片内容
+        image_content = file.read()
         
-        food_name = response.choices[0].message.content.strip()
+        # 识别食物
+        food_name = detect_food(image_content)
         logger.info(f"识别成功: 食物名称={food_name}")
         
+        # 估算重量
         weight = estimate_weight(food_name)
         
         return jsonify({
