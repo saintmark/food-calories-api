@@ -132,28 +132,31 @@ def estimate_food_info_from_image(image_base64, food_name):
                 {
                     "role": "system",
                     "content": """你是一个食物营养专家。请根据图片估算食物的重量和热量。
+                    
+你必须严格按照以下JSON格式返回，确保weight和calories字段只包含纯数字：
+{
+    "weight": 250,
+    "calories": 350
+}
 
 参考标准：
-1. 餐盘直径一般在20-25厘米之间
-2. 常见食物参考：
-   - 米饭一碗：200-250克，约350卡路里
-   - 肉类一份：150-200克，约250-300卡路里
-   - 青菜一份：100-150克，约50卡路里
-   - 水果（如苹果）：150-200克，约80卡路里
+- 米饭一碗：250克，350卡路里
+- 肉类一份：180克，280卡路里
+- 青菜一份：120克，50卡路里
+- 水果（如苹果）：180克，80卡路里
 
-请分析后返回JSON格式数据，数字不要带单位和"约"字：
-{
-    "weight": 数字,
-    "calories": 数字
-}
-只返回JSON，不要其他解释。"""
+注意：
+1. 必须返回纯数字，不要带单位
+2. 不要使用"约"字
+3. 不要添加任何额外说明
+4. 严格按照JSON格式返回"""
                 },
                 {
                     "role": "user",
                     "content": [
                         {
                             "type": "text",
-                            "text": f"这是一张{food_name}的图片，请估算其重量和热量，直接返回JSON格式数据，数字不要带单位。"
+                            "text": f"这是一张{food_name}的图片，请返回其重量和热量估算值，必须是纯数字。"
                         },
                         {
                             "type": "image_url",
@@ -167,30 +170,50 @@ def estimate_food_info_from_image(image_base64, food_name):
         )
         
         response_text = response.choices[0].message.content.strip()
-        logger.info(f"AI响应内容: {response_text}")
+        logger.info(f"AI原始响应: {response_text}")
         
+        # 预处理响应文本，尝试清理非标准JSON格式
         try:
-            # 尝试解析JSON响应
+            # 如果响应包含非标准格式，尝试提取数字
+            if '"约' in response_text or '克"' in response_text or '卡路里"' in response_text:
+                logger.warning("检测到非标准JSON格式，进行预处理")
+                
+                # 提取数字的函数
+                def extract_number(text):
+                    return int(''.join(filter(str.isdigit, text)))
+                
+                # 使用正则表达式或字符串处理来提取数值
+                import re
+                weight_match = re.search(r'"weight":\s*"[^"]*?(\d+)[^"]*"', response_text)
+                calories_match = re.search(r'"calories":\s*"[^"]*?(\d+)[^"]*"', response_text)
+                
+                if weight_match and calories_match:
+                    weight = int(weight_match.group(1))
+                    calories = int(calories_match.group(1))
+                    
+                    # 构造新的标准JSON
+                    response_text = json.dumps({
+                        "weight": weight,
+                        "calories": calories
+                    })
+                    logger.info(f"预处理后的JSON: {response_text}")
+            
+            # 尝试解析JSON
             result = json.loads(response_text)
-            
-            # 清理重量和热量值中的非数字字符
-            def extract_number(value):
-                if isinstance(value, (int, float)):
-                    return value
-                # 提取字符串中的数字
-                return int(''.join(filter(str.isdigit, str(value))) or '0')
-            
-            weight = extract_number(result.get('weight', 0))
-            calories = extract_number(result.get('calories', 0))
-            
-            logger.info(f"提取的数值 - 重量: {weight}, 热量: {calories}")
+            weight = int(result['weight'])
+            calories = int(result['calories'])
             
             # 合理性检查
             if not (50 <= weight <= 1000) or not (20 <= calories <= 1000):
                 raise ValueError(f"数值超出合理范围 - 重量: {weight}, 热量: {calories}")
                 
-        except (json.JSONDecodeError, ValueError) as e:
-            logger.warning(f"无法解析AI响应或数值异常: {str(e)}")
+            return {
+                'weight': weight,
+                'calories': calories
+            }
+                
+        except (json.JSONDecodeError, ValueError, KeyError) as e:
+            logger.warning(f"JSON处理错误: {str(e)}")
             # 使用默认值
             if any(keyword in food_name for keyword in ['饭', '面', '粥']):
                 weight, calories = 250, 350
@@ -206,11 +229,10 @@ def estimate_food_info_from_image(image_base64, food_name):
                 weight, calories = 200, 200
             
             logger.info(f"使用默认值 - 重量: {weight}克, 热量: {calories}卡路里")
-        
-        return {
-            'weight': weight,
-            'calories': calories
-        }
+            return {
+                'weight': weight,
+                'calories': calories
+            }
         
     except Exception as e:
         logger.error(f"食物信息估算错误: {str(e)}")
