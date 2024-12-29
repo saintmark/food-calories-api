@@ -4,3 +4,7 @@ Flask-Cors==3.0.10
 requests==2.31.0
 python-dotenv==1.0.0
 zhipuai==2.1.5.20241204
+openai>=1.0.0
+backoff
+httpx
+gunicorn
