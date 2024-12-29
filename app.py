@@ -101,7 +101,7 @@ openai_client = OpenAI(**openai_config)
 def call_openai_vision(image_data):
     """调用OpenAI Vision API的函数，带有重试机制"""
     return openai_client.chat.completions.create(
-        model="gpt-4-vision-preview",
+        model="gpt-4o-mini",
         messages=[
             {
                 "role": "system",
@@ -133,7 +133,7 @@ def estimate_weight(food_name):
     """使用OpenAI估算食物重量"""
     try:
         response = openai_client.chat.completions.create(
-            model="gpt-4-turbo-preview",
+            model="gpt-4o-mini",
             messages=[
                 {
                     "role": "system",
@@ -219,7 +219,7 @@ def get_calories():
         
         # 使用OpenAI计算卡路里
         response = openai_client.chat.completions.create(
-            model="gpt-4-turbo-preview",
+            model="gpt-4o-mini",
             messages=[
                 {
                     "role": "system",
