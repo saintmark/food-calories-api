@@ -146,7 +146,7 @@ def estimate_food_info_from_image(image_base64, food_name):
 - 水果（如苹果）：180克，80卡路里
 
 注意：
-1. 必须返回纯数字，不要带单位
+1. 必须返回纯数字，不要带引号
 2. 不要使用"约"字
 3. 不要添加任何额外说明
 4. 严格按照JSON格式返回"""
@@ -156,7 +156,7 @@ def estimate_food_info_from_image(image_base64, food_name):
                     "content": [
                         {
                             "type": "text",
-                            "text": f"这是一张{food_name}的图片，请返回其重量和热量估算值，必须是纯数字。"
+                            "text": f"这是一张{food_name}的图片，请返回其重量和热量估算值，必须是纯数字，不要带引号。"
                         },
                         {
                             "type": "image_url",
@@ -172,36 +172,13 @@ def estimate_food_info_from_image(image_base64, food_name):
         response_text = response.choices[0].message.content.strip()
         logger.info(f"AI原始响应: {response_text}")
         
-        # 预处理响应文本，尝试清理非标准JSON格式
         try:
-            # 如果响应包含非标准格式，尝试提取数字
-            if '"约' in response_text or '克"' in response_text or '卡路里"' in response_text:
-                logger.warning("检测到非标准JSON格式，进行预处理")
-                
-                # 提取数字的函数
-                def extract_number(text):
-                    return int(''.join(filter(str.isdigit, text)))
-                
-                # 使用正则表达式或字符串处理来提取数值
-                import re
-                weight_match = re.search(r'"weight":\s*"[^"]*?(\d+)[^"]*"', response_text)
-                calories_match = re.search(r'"calories":\s*"[^"]*?(\d+)[^"]*"', response_text)
-                
-                if weight_match and calories_match:
-                    weight = int(weight_match.group(1))
-                    calories = int(calories_match.group(1))
-                    
-                    # 构造新的标准JSON
-                    response_text = json.dumps({
-                        "weight": weight,
-                        "calories": calories
-                    })
-                    logger.info(f"预处理后的JSON: {response_text}")
-            
-            # 尝试解析JSON
+            # 尝试直接解析JSON
             result = json.loads(response_text)
-            weight = int(result['weight'])
-            calories = int(result['calories'])
+            
+            # 确保转换为整数
+            weight = int(str(result['weight']).replace('"', ''))
+            calories = int(str(result['calories']).replace('"', ''))
             
             # 合理性检查
             if not (50 <= weight <= 1000) or not (20 <= calories <= 1000):
