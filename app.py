@@ -4,6 +4,7 @@ import requests
 import base64
 import os
 import logging
+import json  # 添加这行
 from zhipuai import ZhipuAI
 from dotenv import load_dotenv
 
