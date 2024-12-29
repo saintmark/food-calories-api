@@ -17,6 +17,7 @@ CORS(app)
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
 
+
 # OpenAI配置
 OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
 if not OPENAI_API_KEY:
@@ -24,13 +25,39 @@ if not OPENAI_API_KEY:
 OPENAI_BASE_URL = os.getenv('OPENAI_BASE_URL')
 OPENAI_TIMEOUT = int(os.getenv('OPENAI_TIMEOUT', '30'))
 
-# 初始化OpenAI客户端
-openai_config = {
-    'api_key': OPENAI_API_KEY,
-    'timeout': httpx.Timeout(OPENAI_TIMEOUT)
-}
-if OPENAI_BASE_URL:
-    openai_config['base_url'] = OPENAI_BASE_URL
+logger.info("正在检查环境变量...")
+logger.info(f"所有环境变量: {list(os.environ.keys())}")  # 打印所有可用的环境变量名
+
+logger.info(f"OPENAI_API_KEY 是否存在: {OPENAI_API_KEY is not None}")
+if not OPENAI_API_KEY:
+    # 尝试其他可能的变量名
+    alternative_names = ['OpenAI_API_Key', 'OPENAIAPI_KEY', 'OPENAI_APIKEY']
+    for name in alternative_names:
+        OPENAI_API_KEY = os.getenv(name)
+        if OPENAI_API_KEY:
+            logger.info(f"找到替代变量名: {name}")
+            break
+
+    if not OPENAI_API_KEY:
+        error_msg = "未找到OPENAI_API_KEY环境变量"
+        logger.error(error_msg)
+        raise ValueError(error_msg)
+
+# 初始化OpenAI客户端配置
+try:
+    openai_config = {
+        'api_key': OPENAI_API_KEY,
+        'timeout': httpx.Timeout(OPENAI_TIMEOUT)
+    }
+    if OPENAI_BASE_URL:
+        openai_config['base_url'] = OPENAI_BASE_URL
+        
+    logger.info("正在初始化OpenAI客户端...")
+    openai_client = OpenAI(**openai_config)
+    logger.info("OpenAI客户端初始化成功")
+except Exception as e:
+    logger.error(f"初始化OpenAI客户端时发生错误: {str(e)}")
+    raise
 
 openai_client = OpenAI(**openai_config)
 
