@@ -120,39 +120,39 @@ def get_baidu_access_token():
     response = requests.post(BAIDU_TOKEN_URL, params=params)
     return response.json().get('access_token')
 
-def estimate_weight_from_image(image_base64, food_name):
-    """使用智谱AI根据图片估算食物重量"""
+def estimate_food_info_from_image(image_base64, food_name):
+    """使用智谱AI同时估算食物的重量和热量"""
     try:
-        logger.info(f"开始估算食物重量: {food_name}")
+        logger.info(f"开始估算食物信息: {food_name}")
         
         response = client.chat.completions.create(
             model="glm-4v",
             messages=[
                 {
                     "role": "system",
-                    "content": """你是一个食物重量估算专家。即使没有明确的参照物，也请根据经验和常识来估算重量。
-                    
-                    参考标准：
-                    1. 餐盘直径一般在20-25厘米之间
-                    2. 一般餐具的大小可以作为参考
-                    3. 标准米饭一碗约200-250克
-                    4. 一般肉类菜品一份约150-200克
-                    5. 青菜类一份约100-150克
-                    6. 水果根据大小，如一个苹果约150-200克
-                    
-                    请根据以下步骤分析：
-                    1. 观察食物的类型和大致体积
-                    2. 参考上述标准进行估算
-                    3. 给出一个合理的重量数字
-                    4. 只返回数字，不要任何解释
-                    """
+                    "content": """你是一个食物营养专家。请根据图片估算食物的重量和热量。
+
+参考标准：
+1. 餐盘直径一般在20-25厘米之间
+2. 常见食物参考：
+   - 米饭一碗：200-250克，约350卡路里
+   - 肉类一份：150-200克，约250-300卡路里
+   - 青菜一份：100-150克，约50卡路里
+   - 水果（如苹果）：150-200克，约80卡路里
+
+请分析后返回JSON格式数据：
+{
+    "weight": 数字（克）,
+    "calories": 数字（卡路里）
+}
+只返回JSON，不要其他解释。"""
                 },
                 {
                     "role": "user",
                     "content": [
                         {
                             "type": "text",
-                            "text": f"这是一张{food_name}的图片。根据图片中食物的大小和类型，参考标准食用份量，估算其重量（克）。直接返回数字，不要解释。"
+                            "text": f"这是一张{food_name}的图片，请估算其重量和热量，直接返回JSON格式数据。"
                         },
                         {
                             "type": "image_url",
@@ -165,54 +165,51 @@ def estimate_weight_from_image(image_base64, food_name):
             ]
         )
         
-        weight_text = response.choices[0].message.content.strip()
-        logger.info(f"AI响应内容: {weight_text}")
+        response_text = response.choices[0].message.content.strip()
+        logger.info(f"AI响应内容: {response_text}")
         
-        # 如果返回的是解释性文字，尝试使用默认值
-        if not any(char.isdigit() for char in weight_text):
-            logger.warning(f"AI返回了非数字响应: {weight_text}")
-            # 根据食物类型返回合理的默认值
-            if any(keyword in food_name for keyword in ['饭', '面', '粥']):
-                return 250
-            elif any(keyword in food_name for keyword in ['肉', '鱼', '鸡', '鸭']):
-                return 180
-            elif any(keyword in food_name for keyword in ['菜', '青菜', '生菜']):
-                return 120
-            elif any(keyword in food_name for keyword in ['苹果', '梨', '橙子', '柚子']):
-                return 180
-            elif any(keyword in food_name for keyword in ['草莓', '葡萄', '樱桃']):
-                return 100
-            else:
-                return 200
-        
-        # 提取数字
-        weight = int(''.join(filter(str.isdigit, weight_text)) or '0')
-        
-        # 合理性检查
-        if weight > 1000 or weight < 50:
-            logger.warning(f"估算重量超出合理范围: {weight}克")
-            # 使用相同的默认值逻辑
-            if any(keyword in food_name for keyword in ['饭', '面', '粥']):
-                weight = 250
-            elif any(keyword in food_name for keyword in ['肉', '鱼', '鸡', '鸭']):
-                weight = 180
-            elif any(keyword in food_name for keyword in ['菜', '青菜', '生菜']):
-                weight = 120
-            elif any(keyword in food_name for keyword in ['苹果', '梨', '橙子', '柚子']):
-                weight = 180
-            elif any(keyword in food_name for keyword in ['草莓', '葡萄', '樱桃']):
-                weight = 100
-            else:
-                weight = 200
+        try:
+            # 尝试解析JSON响应
+            result = json.loads(response_text)
+            weight = result.get('weight', 0)
+            calories = result.get('calories', 0)
             
-            logger.info(f"使用默认重量: {weight}")
+            # 合理性检查
+            if not (50 <= weight <= 1000) or not (20 <= calories <= 1000):
+                raise ValueError("数值超出合理范围")
+                
+        except (json.JSONDecodeError, ValueError) as e:
+            logger.warning(f"无法解析AI响应或数值异常: {str(e)}")
+            # 使用默认值
+            if any(keyword in food_name for keyword in ['饭', '面', '粥']):
+                weight, calories = 250, 350
+            elif any(keyword in food_name for keyword in ['肉', '鱼', '鸡', '鸭']):
+                weight, calories = 180, 280
+            elif any(keyword in food_name for keyword in ['菜', '青菜', '生菜']):
+                weight, calories = 120, 50
+            elif any(keyword in food_name for keyword in ['苹果', '梨', '橙子', '柚子']):
+                weight, calories = 180, 80
+            elif any(keyword in food_name for keyword in ['草莓', '葡萄', '樱桃']):
+                weight, calories = 100, 45
+            else:
+                weight, calories = 200, 200
+            
+            logger.info(f"使用默认值 - 重量: {weight}克, 热量: {calories}卡路里")
         
-        return weight
+        return {
+            'weight': weight,
+            'calories': calories
+        }
         
     except Exception as e:
-        logger.error(f"图片重量估算错误: {str(e)}")
+        logger.error(f"食物信息估算错误: {str(e)}")
         logger.error(f"错误详情: ", exc_info=True)
-        return 200
+        return {
+            'weight': 200,
+            'calories': 200
+        }
+
+food_info_cache = {}
 
 @app.route('/identify', methods=['POST'])
 def identify_food():
@@ -250,9 +247,14 @@ def identify_food():
         }
         
         if is_food:
-            # 如果是食物，使用图片估算重量
-            weight = estimate_weight_from_image(image_base64, food_name)
-            response_data['weight'] = weight
+            # 如果是食物，同时估算重量和热量
+            food_info = estimate_food_info_from_image(image_base64, food_name)
+            response_data.update({
+                'weight': food_info['weight'],
+                'calories': food_info['calories']
+            })
+            # 将食物信息存入缓存
+            food_info_cache[food_name] = food_info
         else:
             # 如果不是食物，添加提示信息
             response_data['message'] = "这个不能吃哦"
@@ -265,47 +267,29 @@ def identify_food():
 
 @app.route('/calories', methods=['GET'])
 def get_calories():
-    """使用智谱AI估算卡路里"""
+    """返回已计算的卡路里值"""
     try:
         food_name = request.args.get('foodName')
-        weight = request.args.get('weight')
+        weight = float(request.args.get('weight', 0))
         
         logger.info(f"收到计算卡路里请求: 食物={food_name}, 重量={weight}克")
         
-        if not food_name or not weight:
+        if not food_name or weight <= 0:
             return jsonify({'error': '参数不完整', 'calories': 0}), 400
-        
-                # 如果前端传来了不是食物的请求，直接返回错误
-        if 'message' in request.args and request.args['message'] == "这个不能吃哦":
-            return jsonify({'error': '这不是食物，无法计算卡路里', 'calories': 0}), 400
-        
-        response = client.chat.completions.create(
-            model="glm-4",
-            messages=[
-                {
-                    "role": "system",
-                    "content": """你是一个营养专家，请根据食物重量计算卡路里。
-                    1. 只返回数字，不要包含任何单位或说明
-                    2. 确保返回的卡路里在合理范围内
-                    3. 考虑食物的特性和烹饪方式
-                    4. 如果不确定，返回相近食物的平均值"""
-                },
-                {
-                    "role": "user",
-                    "content": f"请计算{weight}克{food_name}的卡路里含量，只需要返回数字"
-                }
-            ]
-        )
-        
-        calories_text = response.choices[0].message.content.strip()
-        calories = int(''.join(filter(str.isdigit, calories_text)) or '0')
-        
-        # 添加合理性检查
-        if calories > 2000:
-            logger.warning(f"卡路里估算异常: {calories}，将使用默认值")
-            calories = min(calories, 800)  # 单份食物不太可能超过800卡路里
             
-        return jsonify({'calories': calories})
+        # 从缓存中获取食物信息
+        food_info = food_info_cache.get(food_name)
+        if food_info:
+            # 根据新的重量调整卡路里值
+            original_weight = food_info['weight']
+            original_calories = food_info['calories']
+            adjusted_calories = int((weight / original_weight) * original_calories)
+            
+            logger.info(f"计算结果: {adjusted_calories}卡路里 (基于原始数据: {original_calories}卡路里/{original_weight}克)")
+            return jsonify({'calories': adjusted_calories})
+        else:
+            logger.warning(f"缓存中未找到食物信息: {food_name}")
+            return jsonify({'error': '未找到食物信息', 'calories': 0}), 400
         
     except Exception as e:
         logger.error(f"计算卡路里时发生错误: {str(e)}")
