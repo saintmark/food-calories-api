@@ -29,57 +29,75 @@ def identify_with_baidu(image_base64, access_token):
     """使用百度多个识别接口进行识别"""
     logger.info("开始食物识别流程")
     
-    # 1. 首先尝试菜品识别
     params = {
         'image': image_base64,
         'access_token': access_token
     }
     
-    response = requests.post(BAIDU_DISH_DETECT_URL, data=params)
-    result = response.json()
-    logger.info(f"菜品识别结果: {result}")
-    
-    # 如果是菜品，直接返回结果
-    if 'result' in result and len(result['result']) > 0:
-        food_info = result['result'][0]
-        if food_info['name'] != '非菜':
-            return {
-                'name': food_info['name'],
-                'confidence': food_info['probability']
-            }
+    # 1. 首先尝试菜品识别
+    try:
+        response = requests.post(BAIDU_DISH_DETECT_URL, data=params)
+        result = response.json()
+        logger.info(f"菜品识别结果: {result}")
+        
+        if 'result' in result and len(result['result']) > 0:
+            food_info = result['result'][0]
+            if food_info['name'] != '非菜':
+                return {
+                    'name': food_info['name'],
+                    'confidence': food_info['probability']
+                }
+    except Exception as e:
+        logger.error(f"菜品识别出错: {str(e)}")
     
     # 2. 如果不是菜品，尝试食材识别
-    logger.info("尝试食材识别")
-    response = requests.post(BAIDU_INGREDIENT_DETECT_URL, data=params)
-    result = response.json()
-    logger.info(f"食材识别结果: {result}")
-    
-    if 'result' in result and len(result['result']) > 0:
-        food_info = result['result'][0]
-        return {
-            'name': food_info['name'],
-            'confidence': food_info['score']
-        }
-    
-    # 3. 如果还是没有结果，使用通用物体识别
-    logger.info("尝试通用物体识别")
-    response = requests.post(BAIDU_GENERAL_DETECT_URL, data=params)
-    result = response.json()
-    logger.info(f"通用识别结果: {result}")
-    
-    if 'result' in result and len(result['result']) > 0:
-        # 过滤出可能是食物的结果
-        food_keywords = ['食物', '水果', '蔬菜', '零食', '饮料', '甜点', '面包']
-        for item in result['result']:
-            # 检查结果是否包含食物相关关键词
-            if any(keyword in item.get('root', '') or keyword in item.get('keyword', '') 
-                  for keyword in food_keywords):
+    try:
+        logger.info("尝试食材识别")
+        response = requests.post(BAIDU_INGREDIENT_DETECT_URL, data=params)
+        result = response.json()
+        logger.info(f"食材识别结果: {result}")
+        
+        if 'result' in result and len(result['result']) > 0:
+            food_info = result['result'][0]
+            if food_info['name'] != '非果蔬食材':
                 return {
-                    'name': item['keyword'],
-                    'confidence': item['score']
+                    'name': food_info['name'],
+                    'confidence': food_info['score']
                 }
+    except Exception as e:
+        logger.error(f"食材识别出错: {str(e)}")
+    
+    # 3. 最后尝试通用物体识别
+    try:
+        logger.info("尝试通用物体识别")
+        response = requests.post(BAIDU_GENERAL_DETECT_URL, data=params)
+        result = response.json()
+        logger.info(f"通用识别结果: {result}")
+        
+        if 'result' in result and len(result['result']) > 0:
+            # 过滤出可能是食物的结果
+            food_keywords = [
+                '食物', '水果', '蔬菜', '零食', '饮料', '甜点', '面包', 
+                '糕点', '坚果', '干果', '食材', '主食', '小吃', '糖果',
+                '瓜', '果', '菜', '肉', '鱼', '虾', '蛋', '奶'
+            ]
+            
+            for item in result['result']:
+                keyword = item['keyword']
+                root = item.get('root', '')
+                
+                # 检查是否是食物相关
+                if any(kw in keyword or kw in root for kw in food_keywords):
+                    logger.info(f"找到食物相关项: {keyword}, 根类别: {root}")
+                    return {
+                        'name': keyword,
+                        'confidence': item['score']
+                    }
+    except Exception as e:
+        logger.error(f"通用识别出错: {str(e)}")
     
     raise ValueError("无法识别食物")
+
 
 # 智谱AI配置
 ZHIPU_API_KEY = os.getenv('ZHIPU_API_KEY')
