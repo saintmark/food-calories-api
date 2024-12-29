@@ -1,13 +1,10 @@
 from flask import Flask, request, jsonify
 from flask_cors import CORS
+import requests
 import base64
 import os
 import logging
-import json
-from google.cloud import vision
-from google.cloud import translate_v2 as translate
-from google.oauth2 import service_account
-import backoff
+from zhipuai import ZhipuAI
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -19,144 +16,74 @@ CORS(app)
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
 
-# Google Cloud 配置
-GOOGLE_CREDENTIALS_JSON = os.getenv('GOOGLE_APPLICATION_CREDENTIALS_JSON')
-if not GOOGLE_CREDENTIALS_JSON:
-    raise ValueError("未找到 Google Cloud 凭证")
+# 百度AI配置
+BAIDU_API_KEY = os.getenv('BAIDU_API_KEY')
+BAIDU_SECRET_KEY = os.getenv('BAIDU_SECRET_KEY')
+BAIDU_TOKEN_URL = "https://aip.baidubce.com/oauth/2.0/token"
+BAIDU_DISH_DETECT_URL = "https://aip.baidubce.com/rest/2.0/image-classify/v2/dish"
 
-# 从环境变量创建凭证
-credentials_dict = json.loads(GOOGLE_CREDENTIALS_JSON)
-credentials = service_account.Credentials.from_service_account_info(credentials_dict)
+# 智谱AI配置
+ZHIPU_API_KEY = os.getenv('ZHIPU_API_KEY')
+if not ZHIPU_API_KEY:
+    raise ValueError("未找到ZHIPU_API_KEY环境变量")
 
-# 初始化 Vision API 和 Translate API 客户端
-vision_client = vision.ImageAnnotatorClient(credentials=credentials)
-translate_client = translate.Client(credentials=credentials)
+logger.info(f"ZHIPU_API_KEY: {ZHIPU_API_KEY[:10]}...")
+client = ZhipuAI(api_key=ZHIPU_API_KEY)
 
-# 食物重量参考表（克）
-FOOD_WEIGHT_REFERENCE = {
-    '主食类': {
-        'default': 250,
-        'keywords': ['饭', '面', '粥', '馒头', '包子'],
-        'range': (200, 400)
-    },
-    '肉类': {
-        'default': 200,
-        'keywords': ['肉', '鸡', '鸭', '鱼', '牛', '猪'],
-        'range': (100, 300)
-    },
-    '蔬菜类': {
-        'default': 150,
-        'keywords': ['菜', '青菜', '生菜', '白菜', '萝卜'],
-        'range': (100, 200)
-    },
-    '水果类': {
-        'default': 200,
-        'keywords': ['果', '苹果', '香蕉', '橙子'],
-        'range': (100, 300)
+def get_baidu_access_token():
+    """获取百度AI访问令牌"""
+    params = {
+        'grant_type': 'client_credentials',
+        'client_id': BAIDU_API_KEY,
+        'client_secret': BAIDU_SECRET_KEY
     }
-}
+    response = requests.post(BAIDU_TOKEN_URL, params=params)
+    return response.json().get('access_token')
 
-# 食物卡路里参考表（每100克）
-FOOD_CALORIES_REFERENCE = {
-    '主食类': {
-        'default': 116,
-        'keywords': ['饭', '面', '粥', '馒头', '包子'],
-        'range': (100, 150)
-    },
-    '肉类': {
-        'default': 200,
-        'keywords': ['肉', '鸡', '鸭', '鱼', '牛', '猪'],
-        'range': (150, 250)
-    },
-    '蔬菜类': {
-        'default': 30,
-        'keywords': ['菜', '青菜', '生菜', '白菜', '萝卜'],
-        'range': (15, 50)
-    },
-    '水果类': {
-        'default': 56,
-        'keywords': ['果', '苹果', '香蕉', '橙子'],
-        'range': (40, 80)
-    }
-}
-
-def get_food_category(food_name):
-    """根据食物名称判断类别"""
-    for category, info in FOOD_WEIGHT_REFERENCE.items():
-        if any(keyword in food_name for keyword in info['keywords']):
-            return category
-    return '主食类'  # 默认归类为主食
-
-def estimate_food_weight(food_name):
-    """估算食物重量"""
-    category = get_food_category(food_name)
-    return FOOD_WEIGHT_REFERENCE[category]['default']
-
-def calculate_calories(food_name, weight):
-    """计算食物卡路里"""
-    category = get_food_category(food_name)
-    calories_per_100g = FOOD_CALORIES_REFERENCE[category]['default']
-    return int(calories_per_100g * (weight / 100))
-
-@backoff.on_exception(
-    backoff.expo,
-    (Exception),
-    max_tries=3,
-    max_time=30
-)
-def detect_food(image_content):
-    """使用 Google Cloud Vision API 识别食物"""
+def estimate_weight(food_name):
+    """使用智谱AI估算食物重量"""
     try:
-        image = vision.Image(content=image_content)
-        
-        # 调用 Vision API 的标签检测
-        label_response = vision_client.label_detection(image=image)
-        labels = label_response.label_annotations
-        
-        # 调用 Vision API 的对象检测
-        object_response = vision_client.object_localization(image=image)
-        objects = object_response.localized_object_annotations
-        
-        # 处理识别结果
-        food_related_items = []
-        
-        # 从标签中提取食物相关词
-        for label in labels:
-            description = label.description.lower()
-            if any(keyword in description for keyword in ['food', 'dish', 'cuisine', 'meal', 'fruit', 'vegetable', 'meat']):
-                food_related_items.append({
-                    'name': label.description,
-                    'score': label.score
-                })
-        
-        # 从对象中提取食物相关词
-        for obj in objects:
-            name = obj.name.lower()
-            if any(keyword in name for keyword in ['food', 'dish', 'cuisine', 'meal', 'fruit', 'vegetable', 'meat']):
-                food_related_items.append({
-                    'name': obj.name,
-                    'score': obj.score
-                })
-        
-        if not food_related_items:
-            raise ValueError("未能识别出食物")
-            
-        # 按置信度排序并获取最可能的结果
-        food_related_items.sort(key=lambda x: x['score'], reverse=True)
-        english_name = food_related_items[0]['name']
-        
-        # 使用 Google Translate 进行翻译
-        translation = translate_client.translate(
-            english_name,
-            target_language='zh-CN',
-            source_language='en'
+        weight_response = client.chat.completions.create(
+            model="glm-4",
+            messages=[
+                {
+                    "role": "system",
+                    "content": """你是一个食物重量估算专家。请遵循以下规则：
+                    1. 返回单人食用份量的合理重量
+                    2. 普通主食（米饭、面条等）一般在200-400克之间
+                    3. 肉类菜品一般在100-300克之间
+                    4. 青菜类一般在100-200克之间
+                    5. 水果根据大小一般在100-300克之间
+                    6. 只返回数字，不要包含任何单位和文字
+                    7. 确保返回的重量在合理范围内"""
+                },
+                {
+                    "role": "user",
+                    "content": f"估算一份{food_name}的重量（克），请只返回数字"
+                }
+            ]
         )
         
-        return translation['translatedText']
-            
+        weight_text = weight_response.choices[0].message.content.strip()
+        weight = int(''.join(filter(str.isdigit, weight_text)) or '0')
+        
+        # 添加合理性检查
+        if weight > 1000:
+            logger.warning(f"重量估算异常: {weight}克，将使用默认值")
+            if any(keyword in food_name for keyword in ['饭', '面', '粥']):
+                weight = 300
+            elif any(keyword in food_name for keyword in ['肉', '鱼', '鸡', '鸭']):
+                weight = 200
+            elif any(keyword in food_name for keyword in ['菜', '青菜', '生菜']):
+                weight = 150
+            else:
+                weight = 200
+        
+        return weight
+        
     except Exception as e:
-        logger.error(f"食物识别错误: {str(e)}")
-        raise
+        logger.error(f"重量估算错误: {str(e)}")
+        return 200
 
 @app.route('/identify', methods=['POST'])
 def identify_food():
@@ -172,17 +99,38 @@ def identify_food():
         return jsonify({'error': '没有选择文件'}), 400
     
     try:
-        image_content = file.read()
-        food_name = detect_food(image_content)
-        logger.info(f"识别成功: 食物名称={food_name}")
+        # 读取图片并转换为base64
+        image_base64 = base64.b64encode(file.read()).decode('UTF-8')
         
-        weight = estimate_food_weight(food_name)
+        # 调用百度AI识别菜品
+        access_token = get_baidu_access_token()
+        params = {
+            'image': image_base64,
+            'access_token': access_token
+        }
         
-        return jsonify({
-            'name': food_name,
-            'confidence': 0.9,
-            'weight': weight
-        })
+        response = requests.post(BAIDU_DISH_DETECT_URL, data=params)
+        logger.info(f"百度API返回结果: {response.json()}")
+        
+        result = response.json()
+        
+        if 'result' in result and len(result['result']) > 0:
+            food_name = result['result'][0]['name']
+            confidence = result['result'][0]['probability']
+            
+            logger.info(f"识别成功: 食物名称={food_name}, 置信度={confidence}")
+            
+            # 使用智谱AI估算食物重量
+            weight = estimate_weight(food_name)
+            
+            return jsonify({
+                'name': food_name,
+                'confidence': confidence,
+                'weight': weight
+            })
+        
+        logger.error("无法识别食物")
+        return jsonify({'error': '无法识别食物'}), 400
         
     except Exception as e:
         logger.error(f"识别食物时发生错误: {str(e)}")
@@ -190,16 +138,42 @@ def identify_food():
 
 @app.route('/calories', methods=['GET'])
 def get_calories():
+    """使用智谱AI估算卡路里"""
     try:
         food_name = request.args.get('foodName')
-        weight = float(request.args.get('weight', 0))
+        weight = request.args.get('weight')
         
         logger.info(f"收到计算卡路里请求: 食物={food_name}, 重量={weight}克")
         
-        if not food_name or weight <= 0:
+        if not food_name or not weight:
             return jsonify({'error': '参数不完整', 'calories': 0}), 400
         
-        calories = calculate_calories(food_name, weight)
+        response = client.chat.completions.create(
+            model="glm-4",
+            messages=[
+                {
+                    "role": "system",
+                    "content": """你是一个营养专家，请根据食物重量计算卡路里。
+                    1. 只返回数字，不要包含任何单位或说明
+                    2. 确保返回的卡路里在合理范围内
+                    3. 考虑食物的特性和烹饪方式
+                    4. 如果不确定，返回相近食物的平均值"""
+                },
+                {
+                    "role": "user",
+                    "content": f"请计算{weight}克{food_name}的卡路里含量，只需要返回数字"
+                }
+            ]
+        )
+        
+        calories_text = response.choices[0].message.content.strip()
+        calories = int(''.join(filter(str.isdigit, calories_text)) or '0')
+        
+        # 添加合理性检查
+        if calories > 2000:
+            logger.warning(f"卡路里估算异常: {calories}，将使用默认值")
+            calories = min(calories, 800)  # 单份食物不太可能超过800卡路里
+            
         return jsonify({'calories': calories})
         
     except Exception as e:
