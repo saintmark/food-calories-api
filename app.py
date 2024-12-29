@@ -173,8 +173,28 @@ def estimate_food_info_from_image(image_base64, food_name):
         logger.info(f"AI原始响应: {response_text}")
         
         try:
-            # 尝试直接解析JSON
-            result = json.loads(response_text)
+            # 检查响应文本是否为空
+            if not response_text:
+                raise ValueError("AI返回空响应")
+            
+            # 尝试清理响应文本中的特殊字符
+            response_text = response_text.replace('\n', '').replace('\r', '').strip()
+            logger.info(f"清理后的响应: {response_text}")
+            
+            # 如果响应包含带引号的数字，先进行预处理
+            try:
+                result = json.loads(response_text)
+            except json.JSONDecodeError:
+                # 如果解析失败，尝试提取数字
+                import re
+                numbers = re.findall(r'\d+', response_text)
+                if len(numbers) >= 2:
+                    result = {
+                        "weight": numbers[0],
+                        "calories": numbers[1]
+                    }
+                else:
+                    raise ValueError("无法提取数字")
             
             # 确保转换为整数
             weight = int(str(result['weight']).replace('"', ''))
@@ -184,6 +204,7 @@ def estimate_food_info_from_image(image_base64, food_name):
             if not (50 <= weight <= 1000) or not (20 <= calories <= 1000):
                 raise ValueError(f"数值超出合理范围 - 重量: {weight}, 热量: {calories}")
                 
+            logger.info(f"成功解析 - 重量: {weight}, 热量: {calories}")
             return {
                 'weight': weight,
                 'calories': calories
