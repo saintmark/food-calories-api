@@ -20,7 +20,66 @@ logger = logging.getLogger(__name__)
 BAIDU_API_KEY = os.getenv('BAIDU_API_KEY')
 BAIDU_SECRET_KEY = os.getenv('BAIDU_SECRET_KEY')
 BAIDU_TOKEN_URL = "https://aip.baidubce.com/oauth/2.0/token"
+# 添加百度其他识别接口的URL
 BAIDU_DISH_DETECT_URL = "https://aip.baidubce.com/rest/2.0/image-classify/v2/dish"
+BAIDU_INGREDIENT_DETECT_URL = "https://aip.baidubce.com/rest/2.0/image-classify/v1/classify/ingredient"
+BAIDU_GENERAL_DETECT_URL = "https://aip.baidubce.com/rest/2.0/image-classify/v2/advanced_general"
+
+def identify_with_baidu(image_base64, access_token):
+    """使用百度多个识别接口进行识别"""
+    logger.info("开始食物识别流程")
+    
+    # 1. 首先尝试菜品识别
+    params = {
+        'image': image_base64,
+        'access_token': access_token
+    }
+    
+    response = requests.post(BAIDU_DISH_DETECT_URL, data=params)
+    result = response.json()
+    logger.info(f"菜品识别结果: {result}")
+    
+    # 如果是菜品，直接返回结果
+    if 'result' in result and len(result['result']) > 0:
+        food_info = result['result'][0]
+        if food_info['name'] != '非菜':
+            return {
+                'name': food_info['name'],
+                'confidence': food_info['probability']
+            }
+    
+    # 2. 如果不是菜品，尝试食材识别
+    logger.info("尝试食材识别")
+    response = requests.post(BAIDU_INGREDIENT_DETECT_URL, data=params)
+    result = response.json()
+    logger.info(f"食材识别结果: {result}")
+    
+    if 'result' in result and len(result['result']) > 0:
+        food_info = result['result'][0]
+        return {
+            'name': food_info['name'],
+            'confidence': food_info['score']
+        }
+    
+    # 3. 如果还是没有结果，使用通用物体识别
+    logger.info("尝试通用物体识别")
+    response = requests.post(BAIDU_GENERAL_DETECT_URL, data=params)
+    result = response.json()
+    logger.info(f"通用识别结果: {result}")
+    
+    if 'result' in result and len(result['result']) > 0:
+        # 过滤出可能是食物的结果
+        food_keywords = ['食物', '水果', '蔬菜', '零食', '饮料', '甜点', '面包']
+        for item in result['result']:
+            # 检查结果是否包含食物相关关键词
+            if any(keyword in item.get('root', '') or keyword in item.get('keyword', '') 
+                  for keyword in food_keywords):
+                return {
+                    'name': item['keyword'],
+                    'confidence': item['score']
+                }
+    
+    raise ValueError("无法识别食物")
 
 # 智谱AI配置
 ZHIPU_API_KEY = os.getenv('ZHIPU_API_KEY')
@@ -102,35 +161,25 @@ def identify_food():
         # 读取图片并转换为base64
         image_base64 = base64.b64encode(file.read()).decode('UTF-8')
         
-        # 调用百度AI识别菜品
+        # 获取访问令牌
         access_token = get_baidu_access_token()
-        params = {
-            'image': image_base64,
-            'access_token': access_token
-        }
         
-        response = requests.post(BAIDU_DISH_DETECT_URL, data=params)
-        logger.info(f"百度API返回结果: {response.json()}")
+        # 使用多重识别方法
+        result = identify_with_baidu(image_base64, access_token)
         
-        result = response.json()
+        food_name = result['name']
+        confidence = result['confidence']
         
-        if 'result' in result and len(result['result']) > 0:
-            food_name = result['result'][0]['name']
-            confidence = result['result'][0]['probability']
-            
-            logger.info(f"识别成功: 食物名称={food_name}, 置信度={confidence}")
-            
-            # 使用智谱AI估算食物重量
-            weight = estimate_weight(food_name)
-            
-            return jsonify({
-                'name': food_name,
-                'confidence': confidence,
-                'weight': weight
-            })
+        logger.info(f"识别成功: 食物名称={food_name}, 置信度={confidence}")
         
-        logger.error("无法识别食物")
-        return jsonify({'error': '无法识别食物'}), 400
+        # 使用智谱AI估算食物重量
+        weight = estimate_weight(food_name)
+        
+        return jsonify({
+            'name': food_name,
+            'confidence': confidence,
+            'weight': weight
+        })
         
     except Exception as e:
         logger.error(f"识别食物时发生错误: {str(e)}")
