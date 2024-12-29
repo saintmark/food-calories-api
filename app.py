@@ -10,12 +10,43 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+# 在应用开始时添加详细的环境变量检查
+def check_environment():
+    """检查并打印环境变量信息"""
+    logger.info("=== 环境变量检查开始 ===")
+    
+    # 打印所有环境变量（仅打印名称，不打印值）
+    all_env_vars = list(os.environ.keys())
+    logger.info(f"系统中的所有环境变量名称: {all_env_vars}")
+    
+    # 特别检查 OPENAI_API_KEY
+    api_key = os.environ.get('OPENAI_API_KEY')
+    if api_key:
+        logger.info("OPENAI_API_KEY 已找到，长度为: " + str(len(api_key)))
+        logger.info("OPENAI_API_KEY 前10个字符: " + api_key[:10] + "...")
+    else:
+        logger.error("OPENAI_API_KEY 未找到!")
+        
+    logger.info("=== 环境变量检查结束 ===")
+    return api_key
+
+# 应用初始化
 app = Flask(__name__)
 CORS(app)
 
 # 配置日志
-logging.basicConfig(level=logging.DEBUG)
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
 logger = logging.getLogger(__name__)
+
+# 检查环境变量
+OPENAI_API_KEY = check_environment()
+if not OPENAI_API_KEY:
+    raise ValueError("未找到OPENAI_API_KEY环境变量，请确保在Railway中正确设置了环境变量")
+
+
 
 
 # OpenAI配置
