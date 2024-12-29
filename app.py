@@ -120,36 +120,46 @@ def get_baidu_access_token():
     response = requests.post(BAIDU_TOKEN_URL, params=params)
     return response.json().get('access_token')
 
-def estimate_weight(food_name):
-    """使用智谱AI估算食物重量"""
+def estimate_weight_from_image(image_base64, food_name):
+    """使用智谱AI根据图片估算食物重量"""
     try:
-        weight_response = client.chat.completions.create(
-            model="glm-4",
+        response = client.chat.completions.create(
+            model="glm-4v",  # 使用支持图像的模型
             messages=[
                 {
                     "role": "system",
-                    "content": """你是一个食物重量估算专家。请遵循以下规则：
-                    1. 返回单人食用份量的合理重量
-                    2. 普通主食（米饭、面条等）一般在200-400克之间
-                    3. 肉类菜品一般在100-300克之间
-                    4. 青菜类一般在100-200克之间
-                    5. 水果根据大小一般在100-300克之间
-                    6. 只返回数字，不要包含任何单位和文字
-                    7. 确保返回的重量在合理范围内"""
+                    "content": """你是一个食物重量估算专家。请根据图片中食物的大小和类型来估算重量。
+                    请遵循以下规则：
+                    1. 仔细观察图片中食物的大小、数量和密度
+                    2. 考虑食物的类型和特性
+                    3. 只返回数字，不要包含任何单位和文字
+                    4. 确保返回的重量在合理范围内"""
                 },
                 {
                     "role": "user",
-                    "content": f"估算一份{food_name}的重量（克），请只返回数字"
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": f"这是一张{food_name}的图片，请根据图片估算这份食物的重量（克），只返回数字"
+                        },
+                        {
+                            "type": "image_url",
+                            "image_url": {
+                                "url": f"data:image/jpeg;base64,{image_base64}"
+                            }
+                        }
+                    ]
                 }
             ]
         )
         
-        weight_text = weight_response.choices[0].message.content.strip()
+        weight_text = response.choices[0].message.content.strip()
         weight = int(''.join(filter(str.isdigit, weight_text)) or '0')
         
         # 添加合理性检查
-        if weight > 1000:
+        if weight > 1000 or weight == 0:
             logger.warning(f"重量估算异常: {weight}克，将使用默认值")
+            # 根据食物类型返回合理的默认值
             if any(keyword in food_name for keyword in ['饭', '面', '粥']):
                 weight = 300
             elif any(keyword in food_name for keyword in ['肉', '鱼', '鸡', '鸭']):
@@ -162,8 +172,8 @@ def estimate_weight(food_name):
         return weight
         
     except Exception as e:
-        logger.error(f"重量估算错误: {str(e)}")
-        return 200
+        logger.error(f"图片重量估算错误: {str(e)}")
+        return 200  # 发生错误时返回默认值
 
 @app.route('/identify', methods=['POST'])
 def identify_food():
@@ -180,7 +190,8 @@ def identify_food():
     
     try:
         # 读取图片并转换为base64
-        image_base64 = base64.b64encode(file.read()).decode('UTF-8')
+        image_content = file.read()
+        image_base64 = base64.b64encode(image_content).decode('UTF-8')
         
         # 获取访问令牌
         access_token = get_baidu_access_token()
@@ -200,8 +211,8 @@ def identify_food():
         }
         
         if is_food:
-            # 如果是食物，估算重量
-            weight = estimate_weight(food_name)
+            # 如果是食物，使用图片估算重量
+            weight = estimate_weight_from_image(image_base64, food_name)
             response_data['weight'] = weight
         else:
             # 如果不是食物，添加提示信息
