@@ -141,10 +141,10 @@ def estimate_food_info_from_image(image_base64, food_name):
    - 青菜一份：100-150克，约50卡路里
    - 水果（如苹果）：150-200克，约80卡路里
 
-请分析后返回JSON格式数据：
+请分析后返回JSON格式数据，数字不要带单位和"约"字：
 {
-    "weight": 数字（克）,
-    "calories": 数字（卡路里）
+    "weight": 数字,
+    "calories": 数字
 }
 只返回JSON，不要其他解释。"""
                 },
@@ -153,7 +153,7 @@ def estimate_food_info_from_image(image_base64, food_name):
                     "content": [
                         {
                             "type": "text",
-                            "text": f"这是一张{food_name}的图片，请估算其重量和热量，直接返回JSON格式数据。"
+                            "text": f"这是一张{food_name}的图片，请估算其重量和热量，直接返回JSON格式数据，数字不要带单位。"
                         },
                         {
                             "type": "image_url",
@@ -172,12 +172,22 @@ def estimate_food_info_from_image(image_base64, food_name):
         try:
             # 尝试解析JSON响应
             result = json.loads(response_text)
-            weight = result.get('weight', 0)
-            calories = result.get('calories', 0)
+            
+            # 清理重量和热量值中的非数字字符
+            def extract_number(value):
+                if isinstance(value, (int, float)):
+                    return value
+                # 提取字符串中的数字
+                return int(''.join(filter(str.isdigit, str(value))) or '0')
+            
+            weight = extract_number(result.get('weight', 0))
+            calories = extract_number(result.get('calories', 0))
+            
+            logger.info(f"提取的数值 - 重量: {weight}, 热量: {calories}")
             
             # 合理性检查
             if not (50 <= weight <= 1000) or not (20 <= calories <= 1000):
-                raise ValueError("数值超出合理范围")
+                raise ValueError(f"数值超出合理范围 - 重量: {weight}, 热量: {calories}")
                 
         except (json.JSONDecodeError, ValueError) as e:
             logger.warning(f"无法解析AI响应或数值异常: {str(e)}")
@@ -271,12 +281,24 @@ def get_calories():
     """返回已计算的卡路里值"""
     try:
         food_name = request.args.get('foodName')
-        weight = float(request.args.get('weight', 0))
+        weight = request.args.get('weight')
         
-        logger.info(f"收到计算卡路里请求: 食物={food_name}, 重量={weight}克")
+        logger.info(f"收到计算卡路里请求: 食物={food_name}, 重量={weight}")
         
-        if not food_name or weight <= 0:
-            return jsonify({'error': '参数不完整', 'calories': 0}), 400
+        # 检查参数
+        if not food_name:
+            return jsonify({'error': '未提供食物名称', 'calories': 0}), 400
+            
+        if weight == 'undefined' or not weight:
+            return jsonify({'error': '未提供有效重量', 'calories': 0}), 400
+            
+        try:
+            weight = float(weight)
+        except ValueError:
+            return jsonify({'error': '重量格式无效', 'calories': 0}), 400
+            
+        if weight <= 0:
+            return jsonify({'error': '重量必须大于0', 'calories': 0}), 400
             
         # 从缓存中获取食物信息
         food_info = food_info_cache.get(food_name)
@@ -297,7 +319,7 @@ def get_calories():
         return jsonify({
             'error': str(e),
             'calories': 0
-        }), 500
+        }), 400  # 改为 400 表示客户端错误
 
 if __name__ == '__main__':
     port = os.getenv('PORT', 5000)
