@@ -45,7 +45,8 @@ def identify_with_baidu(image_base64, access_token):
             if food_info['name'] != '非菜':
                 return {
                     'name': food_info['name'],
-                    'confidence': food_info['probability']
+                    'confidence': food_info['probability'],
+                    'is_food': True
                 }
     except Exception as e:
         logger.error(f"菜品识别出错: {str(e)}")
@@ -62,7 +63,8 @@ def identify_with_baidu(image_base64, access_token):
             if food_info['name'] != '非果蔬食材':
                 return {
                     'name': food_info['name'],
-                    'confidence': food_info['score']
+                    'confidence': food_info['score'],
+                    'is_food': True
                 }
     except Exception as e:
         logger.error(f"食材识别出错: {str(e)}")
@@ -82,22 +84,23 @@ def identify_with_baidu(image_base64, access_token):
                 '瓜', '果', '菜', '肉', '鱼', '虾', '蛋', '奶'
             ]
             
-            for item in result['result']:
-                keyword = item['keyword']
-                root = item.get('root', '')
-                
-                # 检查是否是食物相关
-                if any(kw in keyword or kw in root for kw in food_keywords):
-                    logger.info(f"找到食物相关项: {keyword}, 根类别: {root}")
-                    return {
-                        'name': keyword,
-                        'confidence': item['score']
-                    }
+            first_result = result['result'][0]
+            keyword = first_result['keyword']
+            root = first_result.get('root', '')
+            
+            # 检查是否是食物相关
+            is_food = any(kw in keyword or kw in root for kw in food_keywords)
+            
+            return {
+                'name': keyword,
+                'confidence': first_result['score'],
+                'is_food': is_food
+            }
+            
     except Exception as e:
         logger.error(f"通用识别出错: {str(e)}")
     
-    raise ValueError("无法识别食物")
-
+    raise ValueError("无法识别物体")
 
 # 智谱AI配置
 ZHIPU_API_KEY = os.getenv('ZHIPU_API_KEY')
@@ -187,20 +190,27 @@ def identify_food():
         
         food_name = result['name']
         confidence = result['confidence']
+        is_food = result['is_food']
         
-        logger.info(f"识别成功: 食物名称={food_name}, 置信度={confidence}")
+        logger.info(f"识别成功: 名称={food_name}, 置信度={confidence}, 是否食物={is_food}")
         
-        # 使用智谱AI估算食物重量
-        weight = estimate_weight(food_name)
-        
-        return jsonify({
+        response_data = {
             'name': food_name,
             'confidence': confidence,
-            'weight': weight
-        })
+        }
+        
+        if is_food:
+            # 如果是食物，估算重量
+            weight = estimate_weight(food_name)
+            response_data['weight'] = weight
+        else:
+            # 如果不是食物，添加提示信息
+            response_data['message'] = "这个不能吃哦"
+        
+        return jsonify(response_data)
         
     except Exception as e:
-        logger.error(f"识别食物时发生错误: {str(e)}")
+        logger.error(f"识别物体时发生错误: {str(e)}")
         return jsonify({'error': str(e)}), 500
 
 @app.route('/calories', methods=['GET'])
@@ -214,6 +224,10 @@ def get_calories():
         
         if not food_name or not weight:
             return jsonify({'error': '参数不完整', 'calories': 0}), 400
+        
+                # 如果前端传来了不是食物的请求，直接返回错误
+        if 'message' in request.args and request.args['message'] == "这个不能吃哦":
+            return jsonify({'error': '这不是食物，无法计算卡路里', 'calories': 0}), 400
         
         response = client.chat.completions.create(
             model="glm-4",
