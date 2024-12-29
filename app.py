@@ -123,8 +123,10 @@ def get_baidu_access_token():
 def estimate_weight_from_image(image_base64, food_name):
     """使用智谱AI根据图片估算食物重量"""
     try:
+        logger.info(f"开始估算食物重量: {food_name}")
+        
         response = client.chat.completions.create(
-            model="glm-4v",  # 使用支持图像的模型
+            model="glm-4v",
             messages=[
                 {
                     "role": "system",
@@ -153,12 +155,24 @@ def estimate_weight_from_image(image_base64, food_name):
             ]
         )
         
+        # 打印完整的响应内容
+        logger.info(f"AI响应原始内容: {response.choices[0].message.content}")
+        
         weight_text = response.choices[0].message.content.strip()
-        weight = int(''.join(filter(str.isdigit, weight_text)) or '0')
+        logger.info(f"提取的文本内容: {weight_text}")
+        
+        # 提取数字
+        digits = ''.join(filter(str.isdigit, weight_text))
+        logger.info(f"提取的数字: {digits}")
+        
+        weight = int(digits or '0')
+        logger.info(f"转换后的重量: {weight}")
         
         # 添加合理性检查
         if weight > 1000 or weight == 0:
             logger.warning(f"重量估算异常: {weight}克，将使用默认值")
+            logger.warning(f"异常重量对应的原始响应: {weight_text}")
+            
             # 根据食物类型返回合理的默认值
             if any(keyword in food_name for keyword in ['饭', '面', '粥']):
                 weight = 300
@@ -168,11 +182,14 @@ def estimate_weight_from_image(image_base64, food_name):
                 weight = 150
             else:
                 weight = 200
+                
+            logger.info(f"使用默认重量: {weight}")
         
         return weight
         
     except Exception as e:
         logger.error(f"图片重量估算错误: {str(e)}")
+        logger.error(f"错误详情: ", exc_info=True)  # 打印完整的错误堆栈
         return 200  # 发生错误时返回默认值
 
 @app.route('/identify', methods=['POST'])
