@@ -130,19 +130,29 @@ def estimate_weight_from_image(image_base64, food_name):
             messages=[
                 {
                     "role": "system",
-                    "content": """你是一个食物重量估算专家。请根据图片中食物的大小和类型来估算重量。
-                    请遵循以下规则：
-                    1. 仔细观察图片中食物的大小、数量和密度
-                    2. 考虑食物的类型和特性
-                    3. 只返回数字，不要包含任何单位和文字
-                    4. 确保返回的重量在合理范围内"""
+                    "content": """你是一个食物重量估算专家。即使没有明确的参照物，也请根据经验和常识来估算重量。
+                    
+                    参考标准：
+                    1. 餐盘直径一般在20-25厘米之间
+                    2. 一般餐具的大小可以作为参考
+                    3. 标准米饭一碗约200-250克
+                    4. 一般肉类菜品一份约150-200克
+                    5. 青菜类一份约100-150克
+                    6. 水果根据大小，如一个苹果约150-200克
+                    
+                    请根据以下步骤分析：
+                    1. 观察食物的类型和大致体积
+                    2. 参考上述标准进行估算
+                    3. 给出一个合理的重量数字
+                    4. 只返回数字，不要任何解释
+                    """
                 },
                 {
                     "role": "user",
                     "content": [
                         {
                             "type": "text",
-                            "text": f"这是一张{food_name}的图片，请根据图片估算这份食物的重量（克），只返回数字"
+                            "text": f"这是一张{food_name}的图片。根据图片中食物的大小和类型，参考标准食用份量，估算其重量（克）。直接返回数字，不要解释。"
                         },
                         {
                             "type": "image_url",
@@ -155,42 +165,54 @@ def estimate_weight_from_image(image_base64, food_name):
             ]
         )
         
-        # 打印完整的响应内容
-        logger.info(f"AI响应原始内容: {response.choices[0].message.content}")
-        
         weight_text = response.choices[0].message.content.strip()
-        logger.info(f"提取的文本内容: {weight_text}")
+        logger.info(f"AI响应内容: {weight_text}")
         
-        # 提取数字
-        digits = ''.join(filter(str.isdigit, weight_text))
-        logger.info(f"提取的数字: {digits}")
-        
-        weight = int(digits or '0')
-        logger.info(f"转换后的重量: {weight}")
-        
-        # 添加合理性检查
-        if weight > 1000 or weight == 0:
-            logger.warning(f"重量估算异常: {weight}克，将使用默认值")
-            logger.warning(f"异常重量对应的原始响应: {weight_text}")
-            
+        # 如果返回的是解释性文字，尝试使用默认值
+        if not any(char.isdigit() for char in weight_text):
+            logger.warning(f"AI返回了非数字响应: {weight_text}")
             # 根据食物类型返回合理的默认值
             if any(keyword in food_name for keyword in ['饭', '面', '粥']):
-                weight = 300
+                return 250
             elif any(keyword in food_name for keyword in ['肉', '鱼', '鸡', '鸭']):
-                weight = 200
+                return 180
             elif any(keyword in food_name for keyword in ['菜', '青菜', '生菜']):
-                weight = 150
+                return 120
+            elif any(keyword in food_name for keyword in ['苹果', '梨', '橙子', '柚子']):
+                return 180
+            elif any(keyword in food_name for keyword in ['草莓', '葡萄', '樱桃']):
+                return 100
+            else:
+                return 200
+        
+        # 提取数字
+        weight = int(''.join(filter(str.isdigit, weight_text)) or '0')
+        
+        # 合理性检查
+        if weight > 1000 or weight < 50:
+            logger.warning(f"估算重量超出合理范围: {weight}克")
+            # 使用相同的默认值逻辑
+            if any(keyword in food_name for keyword in ['饭', '面', '粥']):
+                weight = 250
+            elif any(keyword in food_name for keyword in ['肉', '鱼', '鸡', '鸭']):
+                weight = 180
+            elif any(keyword in food_name for keyword in ['菜', '青菜', '生菜']):
+                weight = 120
+            elif any(keyword in food_name for keyword in ['苹果', '梨', '橙子', '柚子']):
+                weight = 180
+            elif any(keyword in food_name for keyword in ['草莓', '葡萄', '樱桃']):
+                weight = 100
             else:
                 weight = 200
-                
+            
             logger.info(f"使用默认重量: {weight}")
         
         return weight
         
     except Exception as e:
         logger.error(f"图片重量估算错误: {str(e)}")
-        logger.error(f"错误详情: ", exc_info=True)  # 打印完整的错误堆栈
-        return 200  # 发生错误时返回默认值
+        logger.error(f"错误详情: ", exc_info=True)
+        return 200
 
 @app.route('/identify', methods=['POST'])
 def identify_food():
